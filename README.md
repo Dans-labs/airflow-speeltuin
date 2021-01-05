@@ -4,7 +4,7 @@
 Run once:
 
     docker-compose run webserver db init
-    docker-compose run webserver users create -r Admin -u admin -e admin@example.com -f admin -l user -p admin
+    docker-compose run webserver users create -r Admin -u admin -e e.indarto@gmail.com -f admin -l user -p admin
 
 
 Startup AirFlow

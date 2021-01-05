@@ -1,53 +1,117 @@
-version: "3.7"
-
-x-apache-airflow-base: &apache-airflow-base
-  image: apache/airflow:latest
-  environment:
-    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-    AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
-    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-    AIRFLOW__CORE__FERNET_KEY: FB0o_zt4e3Ziq3LdUUO7F2Z95cvFFx16hU8jTeR1ASM=
-    AIRFLOW__CORE__LOAD_EXAMPLES: "True"
-  volumes:
-    - ./dags:/opt/airflow/dags
-  depends_on:
-    - postgres
-    - redis
+version: '3.2'
+networks:
+  airflow:
 
 services:
   postgres:
-    image: postgres:11.5
+    image: postgres:13.1
     environment:
-      POSTGRES_DB: airflow
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      PGDATA: /var/lib/postgresql/data/pgdata
+      - POSTGRES_USER=airflow
+      - POSTGRES_DB=airflow
+      - POSTGRES_PASSWORD=airflow
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    ports:
+      - 5432:5432
     volumes:
-      - /var/lib/postgresql/data/pgdata
-
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.workspace/database/data:/var/lib/postgresql/data/pgdata
+      - ./.workspace/database/logs:/var/lib/postgresql/data/log
+    command: >
+      postgres
+        -c listen_addresses=*
+        -c logging_collector=on
+        -c log_destination=stderr
+        -c max_connections=200
+    networks:
+      - airflow
   redis:
-    image: redis:5
+    image: redis:5.0.5
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-
+    ports:
+      - 6379:6379
+    networks:
+      - airflow
   webserver:
-    <<: *apache-airflow-base
-    command: webserver
+    env_file:
+      - .env
+    image: apache/airflow:2.0.0-python3.8
     ports:
       - 8080:8080
-
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./.workspace/logs:/opt/airflow/logs
+      - ./.workspace/files:/opt/airflow/files
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 8s
+        max_attempts: 3
+    depends_on:
+      - postgres
+      - redis
+    command: webserver
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-webserver.pid ]"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    networks:
+      - airflow
   flower:
-    <<: *apache-airflow-base
-    command: celery flower
+    image: apache/airflow:2.0.0-python3.8
+    env_file:
+      - .env
     ports:
       - 5555:5555
-
+    depends_on:
+      - redis
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 8s
+        max_attempts: 3
+    volumes:
+      - ./.workspace/logs:/opt/airflow/logs
+    command: celery flower
+    networks:
+      - airflow
   scheduler:
-    <<: *apache-airflow-base
+    image: apache/airflow:2.0.0-python3.8
+    env_file:
+      - .env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./.workspace/logs:/opt/airflow/logs
+      - ./.workspace/files:/opt/airflow/files
+      - /var/run/docker.sock:/var/run/docker.sock
     command: scheduler
-
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 8s
+        max_attempts: 3
+    networks:
+      - airflow
   worker:
-    <<: *apache-airflow-base
+    image: apache/airflow:2.0.0-python3.8
+    env_file:
+      - .env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./.workspace/logs:/opt/airflow/logs
+      - ./.workspace/files:/opt/airflow/files
+      - /var/run/docker.sock:/var/run/docker.sock
     command: celery worker
+    depends_on:
+      - scheduler
+
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 8s
+        max_attempts: 3
+    networks:
+      - airflow
